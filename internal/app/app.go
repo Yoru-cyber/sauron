@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Yoru-cyber/Sauron/internal/utils"
@@ -18,18 +19,34 @@ type SystemData struct {
 	NetInfo  string
 }
 
-func FetchAllData() SystemData {
-	return SystemData{
-		HeadInfo: PrintHead(),
-		RAMInfo:  GetRamUsage(),
-		CPUInfo:  GetCPUInfo(),
-		NetInfo:  GetNetwork(),
+func FetchAllData() (*SystemData, error) {
+	HeadInfo, err := GetHeader()
+	if err != nil {
+		return nil, err
 	}
+	RAMInfo, err := GetRamUsage()
+	if err != nil {
+		return nil, err
+	}
+	CPUInfo, err := GetCPUInfo()
+	if err != nil {
+		return nil, err
+	}
+	NetInfo, err := GetNetwork()
+	if err != nil {
+		return nil, err
+	}
+	return &SystemData{
+		HeadInfo: HeadInfo,
+		RAMInfo:  RAMInfo,
+		CPUInfo:  CPUInfo,
+		NetInfo:  NetInfo,
+	}, nil
 }
-func GetRamUsage() string {
+func GetRamUsage() (string, error) {
 	vm, err := mem.VirtualMemory()
 	if err != nil {
-		return fmt.Sprintf("RAM: Error: %v", err)
+		return "", err
 	}
 
 	usedGB := float64(vm.Used) / 1024 / 1024 / 1024
@@ -61,20 +78,20 @@ func GetRamUsage() string {
 	}
 
 	return fmt.Sprintf("RAM: %.1f/%.1f GB %s %.1f%%",
-		usedGB, totalGB, bar(barContent), percent)
+		usedGB, totalGB, bar(barContent), percent), nil
 }
-func PrintHead() string {
+func GetHeader() (string, error) {
 	hostInfo, err := utils.GetHostInfo()
 	if err != nil {
-		panic(err)
+		return "", nil
 	}
 	cores, err := cpu.Counts(false)
 	if err != nil {
-		panic(err)
+		return "", nil
 	}
 	logicalCores, err := cpu.Counts(true)
 	if err != nil {
-		panic(err)
+		return "", nil
 	}
 	boxStyle := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
@@ -91,13 +108,13 @@ func PrintHead() string {
 		fmt.Sprintf("CPU cores:    %d", cores),
 		fmt.Sprintf("CPU logical cores:    %d", logicalCores),
 	)
-	return boxStyle.Render(content)
+	return boxStyle.Render(content), nil
 }
-func GetCPUInfo() string {
+func GetCPUInfo() (string, error) {
 
 	percent, err := cpu.Percent(time.Second, false)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 	color := DraculaColors.Green
 	if percent[0] > 80 {
@@ -118,18 +135,30 @@ func GetCPUInfo() string {
 
 	}
 	return fmt.Sprintf("CPU: %.1f %s",
-		percent[0], bar(barContent))
+		percent[0], bar(barContent)), nil
 }
-func GetNetwork() string {
+func GetNetwork() (string, error) {
 	var output string
 	interfaces, err := net.Interfaces()
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 	for _, iface := range interfaces {
 		if iface.HardwareAddr != "" {
 			output += "Interface: " + iface.Name + "\n" + "MAC: " + iface.HardwareAddr + "\n"
 		}
 	}
-	return output
+	return output, nil
+}
+func BuildContent(data SystemData) string {
+	var sb strings.Builder
+	sb.Grow(1024)
+	sb.WriteString(data.HeadInfo)
+	sb.WriteString("\n")
+	sb.WriteString(data.RAMInfo)
+	sb.WriteString("\n")
+	sb.WriteString(data.CPUInfo)
+	sb.WriteString("\n")
+	sb.WriteString(data.NetInfo)
+	return sb.String()
 }

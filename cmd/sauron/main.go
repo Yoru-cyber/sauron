@@ -9,23 +9,28 @@ import (
 	"github.com/Yoru-cyber/Sauron/internal/utils"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/shirou/gopsutil/mem"
 )
 
 type model struct {
 	viewport viewport.Model
-	memInfo  *mem.VirtualMemoryStat
 	content  string
 	data     app.SystemData
 	width    int
 	height   int
 	ready    bool
 }
-type dataUpdateMsg app.SystemData
+type dataUpdateMsg struct {
+	result *app.SystemData
+	err    error
+}
 
 func fetchDataCmd() tea.Cmd {
 	return func() tea.Msg {
-		return dataUpdateMsg(app.FetchAllData())
+		result, err := app.FetchAllData()
+		if err != nil {
+			return dataUpdateMsg{result: nil, err: err}
+		}
+		return dataUpdateMsg{result: result, err: err}
 	}
 }
 
@@ -80,14 +85,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 	case dataUpdateMsg:
-		m.data = app.SystemData(msg)
-		m.content = fmt.Sprintf("%s\n%s\n%s\n%s",
-			m.data.HeadInfo,
-			m.data.RAMInfo,
-			m.data.CPUInfo,
-			m.data.NetInfo)
-		m.viewport.SetContent(m.content)
-		cmds = append(cmds, tick())
+		if msg.err != nil {
+			m.content = fmt.Sprintf("Error: %v\nRetrying in 1 second...", msg.err)
+			m.viewport.SetContent(m.content)
+			cmds = append(cmds, tick())
+		} else {
+			m.data = app.SystemData(*msg.result)
+			content := app.BuildContent(m.data)
+			m.content = content
+			m.viewport.SetContent(m.content)
+			cmds = append(cmds, tick())
+		}
 	case tickMsg:
 		cmds = append(cmds, fetchDataCmd())
 	case os.Signal:
