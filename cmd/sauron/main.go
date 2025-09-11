@@ -16,9 +16,17 @@ type model struct {
 	viewport viewport.Model
 	memInfo  *mem.VirtualMemoryStat
 	content  string
+	data     app.SystemData
 	width    int
 	height   int
 	ready    bool
+}
+type dataUpdateMsg app.SystemData
+
+func fetchDataCmd() tea.Cmd {
+	return func() tea.Msg {
+		return dataUpdateMsg(app.FetchAllData())
+	}
 }
 
 type tickMsg time.Time
@@ -43,6 +51,7 @@ func main() {
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
 		tick(),
+		fetchDataCmd(),
 	)
 }
 
@@ -70,18 +79,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-	case tickMsg:
-		vm, err := mem.VirtualMemory()
-		if err == nil {
-			m.memInfo = vm
-		}
-		m.content = fmt.Sprintf("%s\n%s\n%s",
-			app.PrintHead(),
-			app.GetRamUsage(),
-			app.GetCPUInfo())
-
+	case dataUpdateMsg:
+		m.data = app.SystemData(msg)
+		m.content = fmt.Sprintf("%s\n%s\n%s\n%s",
+			m.data.HeadInfo,
+			m.data.RAMInfo,
+			m.data.CPUInfo,
+			m.data.NetInfo)
 		m.viewport.SetContent(m.content)
 		cmds = append(cmds, tick())
+	case tickMsg:
+		cmds = append(cmds, fetchDataCmd())
 	case os.Signal:
 		return m, tea.Quit
 	}

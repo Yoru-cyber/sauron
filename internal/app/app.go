@@ -8,8 +8,24 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/shirou/gopsutil/cpu"
 	"github.com/shirou/gopsutil/mem"
+	"github.com/shirou/gopsutil/net"
 )
 
+type SystemData struct {
+	HeadInfo string
+	RAMInfo  string
+	CPUInfo  string
+	NetInfo  string
+}
+
+func FetchAllData() SystemData {
+	return SystemData{
+		HeadInfo: PrintHead(),
+		RAMInfo:  GetRamUsage(),
+		CPUInfo:  GetCPUInfo(),
+		NetInfo:  GetNetwork(),
+	}
+}
 func GetRamUsage() string {
 	vm, err := mem.VirtualMemory()
 	if err != nil {
@@ -46,16 +62,6 @@ func GetRamUsage() string {
 
 	return fmt.Sprintf("RAM: %.1f/%.1f GB %s %.1f%%",
 		usedGB, totalGB, bar(barContent), percent)
-}
-
-// showCursor enables the terminal cursor using an ANSI escape code.
-func ShowCursor() {
-	fmt.Print("\033[?25h")
-}
-
-// hideCursor disables the terminal cursor using an ANSI escape code.
-func HideCursor() {
-	fmt.Print("\033[?25l")
 }
 func PrintHead() string {
 	hostInfo, err := utils.GetHostInfo()
@@ -113,4 +119,17 @@ func GetCPUInfo() string {
 	}
 	return fmt.Sprintf("CPU: %.1f %s",
 		percent[0], bar(barContent))
+}
+func GetNetwork() string {
+	var output string
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		panic(err)
+	}
+	for _, iface := range interfaces {
+		if iface.HardwareAddr != "" {
+			output += "Interface: " + iface.Name + "\n" + "MAC: " + iface.HardwareAddr + "\n"
+		}
+	}
+	return output
 }
