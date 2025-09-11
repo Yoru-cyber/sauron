@@ -2,21 +2,26 @@ package app
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Yoru-cyber/Sauron/internal/utils"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/shirou/gopsutil/cpu"
+	"github.com/shirou/gopsutil/disk"
 	"github.com/shirou/gopsutil/mem"
 	"github.com/shirou/gopsutil/net"
 )
+
+const footerHelp = "Press s for default, n for network, d for disk and q to quit"
 
 type SystemData struct {
 	HeadInfo string
 	RAMInfo  string
 	CPUInfo  string
 	NetInfo  string
+	DiskInfo string
 }
 
 func FetchAllData() (*SystemData, error) {
@@ -36,11 +41,16 @@ func FetchAllData() (*SystemData, error) {
 	if err != nil {
 		return nil, err
 	}
+	DiskInfo, err := GetDiskInfo()
+	if err != nil {
+		return nil, err
+	}
 	return &SystemData{
 		HeadInfo: HeadInfo,
 		RAMInfo:  RAMInfo,
 		CPUInfo:  CPUInfo,
 		NetInfo:  NetInfo,
+		DiskInfo: DiskInfo,
 	}, nil
 }
 func GetRamUsage() (string, error) {
@@ -200,6 +210,25 @@ func GetNetwork() (string, error) {
 	}
 	return output.String(), nil
 }
+func GetDiskInfo() (string, error) {
+	var output strings.Builder
+	output.Grow(1024)
+	ioCounters, err := disk.IOCounters()
+	if err != nil {
+		return "", nil
+	}
+	for _, ioCounter := range ioCounters {
+		output.WriteString("Device: ")
+		output.WriteString(ioCounter.Name)
+		output.WriteString("↑ Read: ")
+		output.WriteString(strconv.FormatUint(ioCounter.ReadCount, 10))
+		output.WriteString(" ")
+		output.WriteString("↓ Write: ")
+		output.WriteString(strconv.FormatUint(ioCounter.WriteCount, 10))
+		output.WriteString("\n")
+	}
+	return output.String(), nil
+}
 func BuildContent(data SystemData) string {
 	var sb strings.Builder
 	sb.Grow(1024)
@@ -209,6 +238,33 @@ func BuildContent(data SystemData) string {
 	sb.WriteString("\n")
 	sb.WriteString(data.CPUInfo)
 	sb.WriteString("\n")
+	return sb.String()
+}
+func DefaultView(data SystemData) string {
+	var sb strings.Builder
+	sb.Grow(1024)
+	sb.WriteString(data.HeadInfo)
+	sb.WriteString("\n")
+	sb.WriteString(data.RAMInfo)
+	sb.WriteString("\n")
+	sb.WriteString(data.CPUInfo)
+	sb.WriteString("\n")
+
+	sb.WriteString(footerHelp)
+	return sb.String()
+}
+func NetworkView(data SystemData) string {
+	var sb strings.Builder
+	sb.Grow(1024)
 	sb.WriteString(data.NetInfo)
+	sb.WriteString("\n")
+	sb.WriteString(footerHelp)
+	return sb.String()
+}
+func DiskView(data SystemData) string {
+	var sb strings.Builder
+	sb.Grow(1024)
+	sb.WriteString(data.DiskInfo)
+	sb.WriteString("\n")
 	return sb.String()
 }

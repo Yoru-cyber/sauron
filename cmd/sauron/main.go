@@ -15,6 +15,7 @@ type model struct {
 	viewport viewport.Model
 	content  string
 	data     app.SystemData
+	view     string
 	width    int
 	height   int
 	ready    bool
@@ -22,6 +23,7 @@ type model struct {
 type dataUpdateMsg struct {
 	result *app.SystemData
 	err    error
+	view   string
 }
 
 func fetchDataCmd() tea.Cmd {
@@ -43,7 +45,7 @@ func main() {
 	}
 	defer utils.CleanupLogger()
 	// Initialize the model
-	m := model{}
+	m := model{view: "default"}
 
 	// Start Bubble Tea program
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -71,6 +73,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+		case "s":
+			m.view = "default"
+			cmds = append(cmds, tick())
+			return m, tea.Batch(cmds...)
+		case "n":
+			m.view = "network"
+			cmds = append(cmds, tick())
+			return m, tea.Batch(cmds...)
+		case "d":
+			m.view = "disk"
+			cmds = append(cmds, tick())
+			return m, tea.Batch(cmds...)
 		}
 
 	case tea.WindowSizeMsg:
@@ -91,10 +105,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, tick())
 		} else {
 			m.data = app.SystemData(*msg.result)
-			content := app.BuildContent(m.data)
-			m.content = content
-			m.viewport.SetContent(m.content)
-			cmds = append(cmds, tick())
+			switch m.view {
+			case "default":
+				m.data = app.SystemData(*msg.result)
+				m.content = app.DefaultView(m.data)
+				m.viewport.SetContent(m.content)
+				cmds = append(cmds, tick())
+			case "network":
+				m.content = app.NetworkView(m.data)
+				m.viewport.SetContent(m.content)
+				cmds = append(cmds, tick())
+			case "disk":
+				m.content = app.DiskView(m.data)
+				m.viewport.SetContent(m.content)
+				cmds = append(cmds, tick())
+			}
 		}
 	case tickMsg:
 		cmds = append(cmds, fetchDataCmd())
