@@ -1,4 +1,4 @@
-package app
+package constants
 
 type Colors struct {
 	Foreground string
