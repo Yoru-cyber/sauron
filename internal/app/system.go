@@ -1,9 +1,11 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Yoru-cyber/Sauron/internal/constants"
@@ -24,41 +26,78 @@ type SystemData struct {
 	NetInfo  string
 	DiskInfo string
 }
+type Result struct {
+	Result string
+	Error  error
+}
+type ResultChan chan Result
 
 func FetchAllData() (*SystemData, error) {
-	HeadInfo, err := GetHeader()
-	if err != nil {
-		return nil, err
+	var wg sync.WaitGroup
+	var errs []error
+	hChan := make(ResultChan)
+	rChan := make(ResultChan)
+	cChan := make(ResultChan)
+	nChan := make(ResultChan)
+	dChan := make(ResultChan)
+	wg.Add(5)
+	go func() {
+		defer wg.Done()
+		GetHeader(hChan)
+	}()
+	go func() {
+		defer wg.Done()
+		GetRamUsage(rChan)
+	}()
+	go func() {
+		defer wg.Done()
+		GetCPUInfo(cChan)
+	}()
+	go func() {
+		defer wg.Done()
+		GetNetwork(nChan)
+	}()
+	go func() {
+		defer wg.Done()
+		GetDiskInfo(dChan)
+	}()
+	hResult := <-hChan
+	rResult := <-rChan
+	cResult := <-cChan
+	nResult := <-nChan
+	dResult := <-dChan
+	if hResult.Error != nil {
+		errs = append(errs, fmt.Errorf("header fetch failed: %w", hResult.Error))
 	}
-	RAMInfo, err := GetRamUsage()
-	if err != nil {
-		return nil, err
+	if rResult.Error != nil {
+		errs = append(errs, fmt.Errorf("RAM fetch failed: %w", rResult.Error))
 	}
-	CPUInfo, err := GetCPUInfo()
-	if err != nil {
-		return nil, err
+	if cResult.Error != nil {
+		errs = append(errs, fmt.Errorf("CPU fetch failed: %w", cResult.Error))
 	}
-	NetInfo, err := GetNetwork()
-	if err != nil {
-		return nil, err
+	if nResult.Error != nil {
+		errs = append(errs, fmt.Errorf("network fetch failed: %w", nResult.Error))
 	}
-	DiskInfo, err := GetDiskInfo()
-	if err != nil {
-		return nil, err
+	if dResult.Error != nil {
+		errs = append(errs, fmt.Errorf("disk fetch failed: %w", dResult.Error))
+	}
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
 	}
 	return &SystemData{
-		HeadInfo: HeadInfo,
-		RAMInfo:  RAMInfo,
-		CPUInfo:  CPUInfo,
-		NetInfo:  NetInfo,
-		DiskInfo: DiskInfo,
+		HeadInfo: hResult.Result,
+		RAMInfo:  rResult.Result,
+		CPUInfo:  cResult.Result,
+		NetInfo:  nResult.Result,
+		DiskInfo: dResult.Result,
 	}, nil
 }
-func GetRamUsage() (string, error) {
+func GetRamUsage(ch ResultChan) {
 	var sb strings.Builder
 	vm, err := mem.VirtualMemory()
 	if err != nil {
-		return "", err
+		ch <- Result{"", err}
+		return
 	}
 
 	usedGB := float64(vm.Used) / 1024 / 1024 / 1024
@@ -96,20 +135,23 @@ func GetRamUsage() (string, error) {
 	sb.WriteString(bar(barContent))
 	sb.WriteString(fmt.Sprintf(" %.1f", percent))
 	sb.WriteString("%")
-	return sb.String(), nil
+	ch <- Result{sb.String(), nil}
 }
-func GetHeader() (string, error) {
+func GetHeader(ch ResultChan) {
 	hostInfo, err := utils.GetHostInfo()
 	if err != nil {
-		return "", nil
+		ch <- Result{"", err}
+		return
 	}
 	cores, err := cpu.Counts(false)
 	if err != nil {
-		return "", nil
+		ch <- Result{"", err}
+		return
 	}
 	logicalCores, err := cpu.Counts(true)
 	if err != nil {
-		return "", nil
+		ch <- Result{"", err}
+		return
 	}
 
 	headerStyle := lipgloss.NewStyle().
@@ -170,13 +212,14 @@ func GetHeader() (string, error) {
 			valueStyle.Render(fmt.Sprintf("%d", logicalCores)),
 		),
 	)
-	return boxStyle.Render(content), nil
+	ch <- Result{boxStyle.Render(content), nil}
 }
-func GetCPUInfo() (string, error) {
+func GetCPUInfo(ch ResultChan) {
 	var sb strings.Builder
 	percent, err := cpu.Percent(time.Second, false)
 	if err != nil {
-		return "", err
+		ch <- Result{"", err}
+		return
 	}
 	pStr := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#ffff")).Width(16).Render("CPU: " + strconv.FormatFloat(percent[0], 'f', 2, 64))
@@ -190,7 +233,7 @@ func GetCPUInfo() (string, error) {
 	filled := int(float64(barWidth) * percent[0] / 100)
 	bar := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render
 	barContent := ""
-	for i := 0; i < barWidth; i++ {
+	for i := range barWidth {
 		if i < filled {
 			barContent += "█"
 		} else {
@@ -201,18 +244,20 @@ func GetCPUInfo() (string, error) {
 	sb.Grow(1024)
 	sb.WriteString(pStr)
 	sb.WriteString(bar(barContent))
-	return sb.String(), nil
+	ch <- Result{sb.String(), nil}
 }
-func GetNetwork() (string, error) {
+func GetNetwork(ch ResultChan) {
 	var sb strings.Builder
 	sb.Grow(1024)
 	interfaces, err := net.Interfaces()
 	if err != nil {
-		return "", err
+		ch <- Result{"", err}
+		return
 	}
 	counters, err := net.IOCounters(true) // pernic = true
 	if err != nil {
-		return "", err
+		ch <- Result{"", err}
+		return
 	}
 	for i, iface := range interfaces {
 		if iface.HardwareAddr != "" {
@@ -220,14 +265,15 @@ func GetNetwork() (string, error) {
 			sb.WriteString(str)
 		}
 	}
-	return sb.String(), nil
+	ch <- Result{sb.String(), nil}
 }
-func GetDiskInfo() (string, error) {
+func GetDiskInfo(ch ResultChan) {
 	var sb strings.Builder
 	sb.Grow(1024)
 	ioCounters, err := disk.IOCounters()
 	if err != nil {
-		return "", nil
+		ch <- Result{"", nil}
+		return
 	}
 	for _, ioCounter := range ioCounters {
 		sb.WriteString("Device: ")
@@ -239,7 +285,7 @@ func GetDiskInfo() (string, error) {
 		sb.WriteString(strconv.FormatUint(ioCounter.WriteCount, 10))
 		sb.WriteString("\n")
 	}
-	return sb.String(), nil
+	ch <- Result{sb.String(), nil}
 }
 func BuildContent(data SystemData) string {
 	var sb strings.Builder
