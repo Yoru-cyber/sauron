@@ -2,10 +2,10 @@ package app
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"time"
 
-	"github.com/Yoru-cyber/Sauron/internal/utils"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -13,35 +13,53 @@ import (
 type model struct {
 	viewport viewport.Model
 	content  string
-	data     SystemData
 	view     string
 	width    int
 	height   int
 	ready    bool
 }
-type dataUpdateMsg struct {
-	result *SystemData
+
+type dataUpdateTestMsg struct {
+	result string
 	err    error
 }
+type refreshMsg time.Time
 
-func fetchDataCmd() tea.Cmd {
+func fetchNetworkDataCmd() tea.Cmd {
 	return func() tea.Msg {
-		result, err := FetchAllData()
-		if err != nil {
-			return dataUpdateMsg{result: nil, err: err}
+		result := FetchNetworkInfo()
+		if result.Error != nil {
+			return dataUpdateTestMsg{result: "", err: result.Error}
 		}
-		return dataUpdateMsg{result: result, err: err}
+		return dataUpdateTestMsg{result: result.Result, err: result.Error}
 	}
 }
-
-type tickMsg time.Time
-
+func fetchDefaultDataCmd() tea.Cmd {
+	return func() tea.Msg {
+		result := FetchDefaultInfo()
+		if result.Error != nil {
+			return dataUpdateTestMsg{result: "", err: result.Error}
+		}
+		return dataUpdateTestMsg{result: result.Result, err: result.Error}
+	}
+}
+func fetchDiskCmd() tea.Cmd {
+	return func() tea.Msg {
+		result := FetchDiskInfo()
+		if result.Error != nil {
+			return dataUpdateTestMsg{result: "", err: result.Error}
+		}
+		return dataUpdateTestMsg{result: result.Result, err: result.Error}
+	}
+}
 func Run() {
-	if err := utils.InitLogger(); err != nil {
-		fmt.Printf("Failed to setup logging: %v\n", err)
+	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+	f, err := tea.LogToFile("sauron-debug.log", "debug")
+	if err != nil {
+		fmt.Println("couldn't open a file for logging:", err)
 		os.Exit(1)
 	}
-	defer utils.CleanupLogger()
+	defer f.Close()
 	// Initialize the model
 	m := model{view: "default"}
 
@@ -54,9 +72,9 @@ func Run() {
 }
 
 func (m model) Init() tea.Cmd {
+	// Schedule the initial fetch command and start the periodic refresh.
 	return tea.Batch(
 		tick(),
-		fetchDataCmd(),
 	)
 }
 
@@ -72,16 +90,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "q":
 			return m, tea.Quit
 		case "s":
+			log.Println("View(): Pressed 's', changing to default view.")
 			m.view = "default"
-			cmds = append(cmds, tick())
+			m.viewport.SetContent(m.content)
 			return m, tea.Batch(cmds...)
 		case "n":
+			log.Println("View(): Pressed 'n', changing to network view.")
 			m.view = "network"
-			cmds = append(cmds, tick())
+			m.viewport.SetContent(m.content)
 			return m, tea.Batch(cmds...)
 		case "d":
+			log.Println("View(): Pressed 'd', changing to disk view.")
 			m.view = "disk"
-			cmds = append(cmds, tick())
+			m.viewport.SetContent(m.content)
 			return m, tea.Batch(cmds...)
 		}
 
@@ -95,36 +116,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.width = msg.Width
 		m.height = msg.Height
-
-	case dataUpdateMsg:
+	case dataUpdateTestMsg:
 		if msg.err != nil {
 			m.content = fmt.Sprintf("Error: %v\nRetrying in 1 second...", msg.err)
-			m.viewport.SetContent(m.content)
-			cmds = append(cmds, tick())
 		} else {
-			m.data = SystemData(*msg.result)
-			switch m.view {
-			case "default":
-				m.data = SystemData(*msg.result)
-				m.content = DefaultView(m.data)
-				m.viewport.SetContent(m.content)
-			case "network":
-				m.content = NetworkView(m.data)
-				m.viewport.SetContent(m.content)
-			case "disk":
-				m.content = DiskView(m.data)
-				m.viewport.SetContent(m.content)
-			}
-			cmds = append(cmds, tick())
+			m.content = msg.result
 		}
-	case tickMsg:
-		cmds = append(cmds, fetchDataCmd())
+		m.viewport.SetContent(m.content)
+
+		return m, nil
+	case refreshMsg:
+		// When a tick message is received, trigger a new data fetch
+		// based on the current view.
+		switch m.view {
+		case "default":
+			log.Println("Refresh(): Scheduling a refresh default data fetch command.")
+			cmds = append(cmds, fetchDefaultDataCmd())
+		case "network":
+			log.Println("Refresh(): Scheduling a refresh network data fetch command.")
+			cmds = append(cmds, fetchNetworkDataCmd())
+		case "disk":
+			log.Println("Refresh(): Scheduling a refresh disk data fetch command.")
+			cmds = append(cmds, fetchDiskCmd())
+		}
+		cmds = append(cmds, tick())
+		return m, tea.Batch(cmds...)
 	case os.Signal:
 		return m, tea.Quit
 	}
+	log.Println("Debug(): updating viewport")
 	m.viewport, cmd = m.viewport.Update(msg)
 	cmds = append(cmds, cmd)
-
 	return m, tea.Batch(cmds...)
 }
 
@@ -134,9 +156,8 @@ func (m model) View() string {
 	}
 	return m.viewport.View()
 }
-
 func tick() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
-		return tickMsg(t)
+		return refreshMsg(t)
 	})
 }

@@ -19,6 +19,12 @@ import (
 
 const footerHelp = "Press s for default, n for network, d for disk and q to quit"
 
+// cache for Default info as it is OS, CPU, Kernel info so it won't change
+var (
+	headerInfoCache Result
+	cacheMutex      sync.Mutex
+)
+
 type SystemData struct {
 	HeadInfo string
 	RAMInfo  string
@@ -32,6 +38,78 @@ type Result struct {
 }
 type ResultChan chan Result
 
+func FetchNetworkInfo() Result {
+	nChan := make(ResultChan)
+	go GetNetwork(nChan)
+	nResult := <-nChan
+	return nResult
+}
+func FetchDiskInfo() Result {
+	dChan := make(ResultChan)
+	go GetDiskInfo(dChan)
+	dResult := <-dChan
+	return dResult
+}
+func getOrCacheHeader() Result {
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+
+	// Check if the cache is already populated.
+	if headerInfoCache.Result != "" {
+		return headerInfoCache
+	}
+
+	// If the cache is empty, perform the expensive data fetch.
+	hChan := make(ResultChan)
+	go GetHeader(hChan) // No need for a goroutine, as this is a blocking call within this function.
+	hResult := <-hChan
+
+	// Cache the result for future calls.
+	headerInfoCache = hResult
+	return hResult
+}
+func FetchDefaultInfo() Result {
+	var hResult Result
+	if headerInfoCache.Result == "" {
+		hResult = getOrCacheHeader()
+	} else {
+		hResult = headerInfoCache
+	}
+	var sb strings.Builder
+	sb.Grow(1024)
+	var wg sync.WaitGroup
+	wg.Add(5)
+	var errs []error
+	rChan := make(ResultChan)
+	cChan := make(ResultChan)
+
+	go func() {
+		defer wg.Done()
+		GetRamUsage(rChan)
+	}()
+	go func() {
+		defer wg.Done()
+		GetCPUInfo(cChan)
+	}()
+
+	rResult := <-rChan
+	cResult := <-cChan
+
+	if rResult.Error != nil {
+		errs = append(errs, fmt.Errorf("RAM fetch failed: %w", rResult.Error))
+	}
+	if cResult.Error != nil {
+		errs = append(errs, fmt.Errorf("CPU fetch failed: %w", cResult.Error))
+	}
+	content := BuildDefaultView(hResult.Result, cResult.Result, rResult.Result)
+	var finalResult Result
+	if len(errs) > 0 {
+		finalResult = Result{"", errors.Join(errs...)}
+	} else {
+		finalResult = Result{content, nil}
+	}
+	return finalResult
+}
 func FetchAllData() (*SystemData, error) {
 	var wg sync.WaitGroup
 	var errs []error
@@ -153,7 +231,7 @@ func GetHeader(ch ResultChan) {
 		ch <- Result{"", err}
 		return
 	}
-
+	// Should be a different function
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color(constants.DraculaColors.Cyan)).
@@ -286,43 +364,4 @@ func GetDiskInfo(ch ResultChan) {
 		sb.WriteString("\n")
 	}
 	ch <- Result{sb.String(), nil}
-}
-func BuildContent(data SystemData) string {
-	var sb strings.Builder
-	sb.Grow(1024)
-	sb.WriteString(data.HeadInfo)
-	sb.WriteString("\n")
-	sb.WriteString(data.RAMInfo)
-	sb.WriteString("\n")
-	sb.WriteString(data.CPUInfo)
-	sb.WriteString("\n")
-	return sb.String()
-}
-func DefaultView(data SystemData) string {
-	var sb strings.Builder
-	sb.Grow(1024)
-	sb.WriteString(data.HeadInfo)
-	sb.WriteString("\n")
-	sb.WriteString(data.RAMInfo)
-	sb.WriteString("\n")
-	sb.WriteString(data.CPUInfo)
-	sb.WriteString("\n")
-
-	sb.WriteString(footerHelp)
-	return sb.String()
-}
-func NetworkView(data SystemData) string {
-	var sb strings.Builder
-	sb.Grow(1024)
-	sb.WriteString(data.NetInfo)
-	sb.WriteString("\n")
-	sb.WriteString(footerHelp)
-	return sb.String()
-}
-func DiskView(data SystemData) string {
-	var sb strings.Builder
-	sb.Grow(1024)
-	sb.WriteString(data.DiskInfo)
-	sb.WriteString("\n")
-	return sb.String()
 }
